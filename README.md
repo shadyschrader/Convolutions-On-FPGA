@@ -1,4 +1,4 @@
-# Convolution Engine Project
+# Convolutions on FPGA
 ## Overview
 This project implements a hardware-based convolution engine in Verilog, designed for FPGA deployment. The module processes a 128x128 grayscale image (8-bit per pixel) using a 3x3 filter to produce a 126x126 output feature map (16-bit per element). The input image is preloaded into a Block RAM (BRAM) using a .coe file, eliminating the need for runtime image loading. The design is parameterized, modular, and includes a testbench for simulation-based verification.
 Project Status
