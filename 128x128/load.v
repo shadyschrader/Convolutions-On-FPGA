@@ -1,78 +1,95 @@
 module load #(
-    parameter IMAGE_WIDTH = 128,
-    parameter IMAGE_HEIGHT = 128,
-    parameter FILTER_SIZE = 3
+  parameter IMAGE_WIDTH = 128,
+  parameter IMAGE_HEIGHT = 128,
+  parameter FILTER_SIZE = 3
 ) (
-    input clk,
-    input rst,
-    input wire load_en,
-    input wire new_buffer,
-    input wire [(IMAGE_WIDTH*IMAGE_HEIGHT*8)-1 : 0] image_mem_flat,
-    output reg [(FILTER_SIZE*IMAGE_WIDTH*8)-1:0] row_buffer_flat, // Packed array
-    output reg loaded
+  input clk,
+  input rst,
+  input wire load_en,
+  input wire new_buffer,
+  // BRAM interface instead of direct image input
+  output reg bram_en_b,
+  output reg [($clog2(IMAGE_HEIGHT*IMAGE_WIDTH))-1:0] bram_addr_b,
+  input wire [7:0] bram_data_b,
+  input wire [15:0] row_count,  // Get row count from top module
+  output reg [(FILTER_SIZE*IMAGE_WIDTH*8)-1:0] row_buffer_flat,
+  output reg loaded
 );
-    
-    // Image memory - keep as is
-    reg [7:0] image_mem [0:IMAGE_HEIGHT-1][0:IMAGE_WIDTH-1];
-    
-    // Internal row buffer for easier manipulation
-    reg [7:0] row_buffer_internal [0:FILTER_SIZE-1][0:IMAGE_WIDTH-1];
-    
-    // Row counter
-    reg [$clog2(IMAGE_HEIGHT):0] row_count;
-    integer i, j;
-
-    genvar ga, gb;
-    generate
-        for (ga = 0; ga < IMAGE_WIDTH; ga = ga + 1) begin
-            for (gb = 0; gb < IMAGE_HEIGHT; gb = gb + 1) begin
-                always @(*) begin
-                    image_mem[ga][gb] = image_mem_flat[(ga*IMAGE_WIDTH + gb)*8 +: 8];
-                end
-            end
-        end
-    endgenerate
-
-    // Convert internal buffer to flat output
-    // ALWAYS COMBINATIONAL BLOCK APPROACH
-    always @(*) begin
-        for (i = 0; i < FILTER_SIZE; i = i + 1) begin
-            for (j = 0; j < IMAGE_WIDTH; j = j + 1) begin
-                row_buffer_flat[(i*IMAGE_WIDTH+j)*8 +: 8] = row_buffer_internal[i][j];
-            end
-        end
+  // Internal row buffer
+  reg [7:0] row_buffer_internal [0:FILTER_SIZE-1][0:IMAGE_WIDTH-1];
+  
+  // Convert internal buffer to flat output
+  integer i, j;
+  always @(*) begin
+    for (i = 0; i < FILTER_SIZE; i = i + 1) begin
+      for (j = 0; j < IMAGE_WIDTH; j = j + 1) begin
+        row_buffer_flat[(i*IMAGE_WIDTH+j)*8 +: 8] = row_buffer_internal[i][j];
+      end
     end
-
-always @(posedge clk or negedge rst) begin
-        if (!rst) begin
-            for (i = 0; i < FILTER_SIZE; i = i + 1) begin
-                for (j = 0; j < IMAGE_WIDTH; j = j + 1) begin
-                    row_buffer_internal[i][j] <= 0;
-                end
-            end
-            row_count <= 0;
+  end
+  
+  // State machine for loading from BRAM
+  reg [1:0] load_state;
+  reg [$clog2(FILTER_SIZE*IMAGE_WIDTH):0] load_counter;
+  parameter IDLE = 2'b00, LOADING_BUFFER = 2'b01, READ_WAIT = 2'b10, DONE = 2'b11;
+  
+  always @(posedge clk or negedge rst) begin
+    if (!rst) begin
+      for (i = 0; i < FILTER_SIZE; i = i + 1) begin
+        for (j = 0; j < IMAGE_WIDTH; j = j + 1) begin
+          row_buffer_internal[i][j] <= 0;
+        end
+      end
+      loaded <= 0;
+      load_state <= IDLE;
+      load_counter <= 0;
+      bram_en_b <= 0;
+      bram_addr_b <= 0;
+    end else begin
+      case (load_state)
+        IDLE: begin
+          if (load_en) begin
+            // Start loading from BRAM to buffer
+            load_state <= LOADING_BUFFER;
+            load_counter <= 0;
+            bram_en_b <= 1;
             loaded <= 0;
-        end else begin
-            if (load_en || new_buffer) begin
-                loaded <= (row_count + FILTER_SIZE <= IMAGE_HEIGHT);
-                if (row_count + FILTER_SIZE <= IMAGE_HEIGHT) begin
-                    for (i = 0; i < FILTER_SIZE; i = i + 1) begin
-                        for (j = 0; j < IMAGE_WIDTH; j = j + 1) begin
-                            row_buffer_internal[i][j] <= image_mem[i + row_count][j];
-                        end
-                    end
-                end
-                if (new_buffer) begin
-                    if (row_count + FILTER_SIZE + 1 <= IMAGE_HEIGHT) begin
-                        row_count <= row_count + 1;
-                    end else begin
-                        row_count <= 0;
-                    end
-                end
-            end else begin
-                loaded <= 0;
-            end
+          end
         end
+        
+        LOADING_BUFFER: begin
+          // Calculate row and column from counter
+          i = load_counter / IMAGE_WIDTH;
+          j = load_counter % IMAGE_WIDTH;
+          
+          // Set address to read from BRAM based on row_count
+          bram_addr_b <= (row_count + i) * IMAGE_WIDTH + j;
+          
+          // Wait one cycle for BRAM data
+          load_state <= READ_WAIT;
+        end
+        
+        READ_WAIT: begin
+          // Capture data from BRAM
+          row_buffer_internal[load_counter/IMAGE_WIDTH][load_counter%IMAGE_WIDTH] <= bram_data_b;
+          
+          if (load_counter == FILTER_SIZE*IMAGE_WIDTH-1) begin
+            load_state <= DONE;
+            bram_en_b <= 0;
+          end else begin
+            load_counter <= load_counter + 1;
+            load_state <= LOADING_BUFFER;
+          end
+        end
+        
+        DONE: begin
+          loaded <= 1;
+          if (!load_en && !new_buffer) begin
+            load_state <= IDLE;
+            loaded <= 0;
+          end
+        end
+      endcase
     end
-
+  end
 endmodule
