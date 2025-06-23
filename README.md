@@ -90,10 +90,9 @@ Memory Latency: Both BRAM modules operate with single-cycle read/write latency f
 ## Results
 * **Simulation Ouput**:
 
-![Simulation Output](Convolutions-On-FPGA/cleaned-repo/assets)
+![Image](https://github.com/user-attachments/assets/e2255387-0bcb-4fce-8a2c-9f2c3f4a1dac)
 
-* **Resource Utilization:**
-<image>
+
 
 ## Scope for Improvement
 ### 1. Multiple Pipelines 
